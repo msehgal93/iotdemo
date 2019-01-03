@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>CMOS</title>
+	<style type="text/css">
+		#loading img {
+			max-height: 110px;
+		}
+	</style>
+</head>
+<body>
+	<h1>IOT Device Registration</h1>
+	<div>
+		<button id="btn_con" onClick="checkConnected()">
+			Check Connected
+		</button>
+		 &nbsp;
+		<button id="btn_gwl" onClick="getWifiList()">
+			Get Wifi List
+		</button>
+	</div>
+	<div id="loading"></div>
+	<h3 id="status_connected"></h3>
+	<div id="status_connected_message"></div>
+	<h3 id="status_wifi_list"></h3>
+	<div id="status_wifi_list_message"></div>
+	<div id="set_wifi_form" style="display: none;">
+		<h4>Connect to Wifi</h4>
+		<form id="form">
+			<select id="form_name" required="" name="name"></select>
+			<input style="display: none;" id="form_pass" type="text" name="password" placeholder="wifi password" />
+			<input type="submit" value="Connect" />
+		</form>
+	</div>
+	<h3 id="status_wifi_connected_message"></h3>
+
+
+
+	<script type="text/javascript" src="jquery-3.1.1.min.js"></script>
+	<script type="text/javascript">
+		/*
+
+		apis
+			connected to device or not & get device details (id)
+				http://192.168.20.10:80/CON
+				`a=["OK","123456"]`
+			get wifi list - both scanned and known
+				http://192.168.20.10:80/GWL
+				`a=["OK"`
+			send wifi credentials
+
+		process
+			polling the iot device with 2 sec interval and update  status 'device_connected'
+			if device_connected = true
+				CASE 2: get device id & wifi list (both scanned and known)
+			else
+				CASE 1: show connect your device message
+			In CASE 2: connect to device with wifi credentials submitted by user
+				wifi=xxx&pass=xxxx for new wifi
+				wifi=xxx&pass=     for already known wifi
+
+		*/
+
+		data = {
+			loading: false,
+			connected: false,
+			connected_message: '',
+			device_id: '',
+			wifi_list: [],
+			wifi_list_message: '',
+			wifi_connected_message: ''
+		};
+
+		a = null; // data sent by device
+		requestTimeout = null;
+		requestTimeoutInterval = 40000;
+		requestScript  = null;
+		requestHandler = null; // run function when callback succeds
+		noop = function(){};
+
+		api = {
+			connected: {
+				url: "http://192.168.20.10:80/CON",
+				handleResponse: function() {
+					console.log('script ready!');
+					data.loading = false;
+					clearTimeout(requestTimeout);
+
+					if(a[0] === 'OK') {
+						data.device_id = a[1];
+						data.connected = true;
+						data.connected_message = "";
+					}
+					else {
+						data.connected = false;
+						data.connected_message = a;
+					}
+
+					cleanUp();
+					updateState();
+				}
+			},
+			wifiList: {
+				url: "http://192.168.20.10:80/GWL",
+				handleResponse: function() {
+					data.loading = false;
+					clearTimeout(requestTimeout);
+
+					if( Array.isArray(a) ) {
+						data.wifi_list = a;
+					}
+					else {
+						data.connected_message = a;
+					}
+
+					cleanUp();
+					updateState();
+				}
+			},
+			setWifi: {
+				url: "http://192.168.20.10:80/SAP",
+				handleResponse: function() {
+					data.loading = false;
+					clearTimeout(requestTimeout);
+
+					if( a === "OK" ) {
+						// data.wifi_list = a;
+						data.wifi_connected_message = "Device Successfully Connected to Wifi.";
+					}
+					else {
+						data.wifi_connected_message = "Pasword Incorrect";
+					}
+
+					cleanUp();
+					updateState();
+				}
+			}
+		};
+
+
+
+		function updateState(){
+
+			$('#loading').html(
+				data.loading ? "<img src='ajax-loader.gif'>" : ""
+			);
+
+			$("#status_connected").html(
+				data.connected ? "Device: Connected" : "Device: Not Connected"
+			);
+
+			$("#status_connected_message").text(data.connected_message);
+
+
+
+			if(data.wifi_list.length) {
+				var str = "";
+				data.wifi_list[0].forEach(d=>{
+					str += "<option class='known' value='"+d+"'>" + d + "</option>";
+				});
+				data.wifi_list[1].forEach(d=>{
+					str += "<option class='unknown' value='"+d+"'>" + d + "</option>";
+				});
+
+				$("#set_wifi_form").show();
+				$("#form_name").html(str);
+				$("#form_name option:first").click();
+				$("#status_wifi_list").html(
+					"<p>Known Wifis': " + JSON.stringify(data.wifi_list[0]) + "</p>" +
+					"<p>Unknown Wifis': " + JSON.stringify(data.wifi_list[1]) + "</p>"
+				);
+			}
+
+			$("#status_wifi_list_message").text(data.wifi_list_message);
+
+			$("#status_wifi_connected_message").text(data.wifi_connected_message);
+
+			if(data.loading) {
+				$('#btn_con').attr('disabled', true);
+				$('#btn_gwl').attr('disabled', true);
+			}
+			else {
+				$('#btn_con').removeAttr('disabled');
+				$('#btn_gwl').removeAttr('disabled');
+			}
+		}
+		function loadScript( url ) {
+			var requestScript = null;
+
+			requestScript = document.createElement( "script" );
+			requestScript.src = url;
+
+			if(requestScript.readyState) {  // only required for IE <9
+				requestScript.onreadystatechange = function() {
+					if ( requestScript.readyState === "loaded" || requestScript.readyState === "complete" ) {
+						requestScript.onreadystatechange = null;
+						requestHandler();
+					}
+				};
+			} else {  //Others
+				requestScript.onload = function() {
+					requestHandler();
+				};
+			}
+
+			window.requestScript = requestScript;
+			document.body.appendChild( window.requestScript );
+		}
+		function cleanUp() {
+			document.body.removeChild(requestScript);
+			requestScript = null;
+		}
+
+
+		function checkConnected(){
+			if(data.loading) return;
+
+			data.loading = true;
+			updateState();
+
+			requestHandler = api.connected.handleResponse;
+			loadScript(api.connected.url);
+
+			window.requestTimeout = setTimeout(function(){
+
+				requestHandler = noop;
+				data.loading = false;
+				data.connected = false;
+				data.connected_message = "Unable to connect with device. Make sure you are connected with the device Wifi.";
+				cleanUp();
+				updateState();
+			}, requestTimeoutInterval);
+		}
+
+		function getWifiList(){
+			if(data.loading) return;
+
+			data.loading = true;
+			updateState();
+
+			requestHandler = api.wifiList.handleResponse;
+			loadScript(api.wifiList.url);
+
+			window.requestTimeout = setTimeout(function(){
+				requestHandler = noop;
+				data.loading = false;
+				data.connected = false;
+				data.wifi_list_message = "Unable to get Wifi list.";
+				cleanUp();
+				updateState();
+			}, requestTimeoutInterval);
+		}
+
+		$("body #form_name").on('change', function(e){
+			var _this = $(this).find(":selected");
+			if(_this.attr('class') === "known") {
+				$("#form_pass").hide();
+			}
+			else {
+				$("#form_pass").show();
+			}
+			$("#form_pass").val("");
+		});
+		$(document).on('submit','#form',function(e){
+			e.preventDefault();
+			e.stopPropagation();
+
+			var
+				name = $("#form_name").val(),
+				pass = $("#form_pass").val();
+
+			setWifi(name, pass);
+		});
+
+
+		function setWifi(name, pass){
+			if(data.loading) return;
+
+			data.loading = true;
+			updateState();
+
+			requestHandler = api.setWifi.handleResponse;
+			loadScript(api.setWifi.url+"/"+name+"/"+pass);
+
+			window.requestTimeout = setTimeout(function(){
+				requestHandler = noop;
+				data.loading = false;
+				data.wifi_connected_message = "Unable to connect with Wifi.";
+				cleanUp();
+				updateState();
+			}, requestTimeoutInterval);
+		}
+
+
+	</script>
+</body>
+</html>
